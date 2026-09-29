@@ -5,11 +5,14 @@ import { InterfaceGisRepository } from '../../domain/contracts/gis.interface.rep
 import { GisPostgreSQLPersistence } from '../repositories/postgresql/persistence/gis-postgresql.persistence';
 import { DatabasePersistenceModule } from '../../../../shared/connections/database/database-persistence.module';
 
+import { GetScadaTelemetryUseCase } from '../../application/usecases/queries/GetScadaTelemetryUseCase';
+
 @Module({
   imports: [DatabasePersistenceModule],
   controllers: [GisController],
   providers: [
     GetNetworkMapGeoJsonUseCase,
+    GetScadaTelemetryUseCase,
     {
       provide: InterfaceGisRepository,
       useClass: GisPostgreSQLPersistence,

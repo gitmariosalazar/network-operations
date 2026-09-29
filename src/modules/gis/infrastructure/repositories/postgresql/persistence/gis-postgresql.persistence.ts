@@ -5,6 +5,9 @@ import { DatabaseAbstract } from '../../../../../../shared/connections/database/
 import { MapGeojsonSqlResult } from '../../../interfaces/map-geojson.sql.result';
 import { GisAdapter } from '../../../adapters/gis.adapter';
 
+import { ScadaTelemetryResponse } from '../../../../domain/schemas/response/scada-telemetry';
+import { ScadaTelemetrySqlResult } from '../../../interfaces/scada-telemetry.sql.result';
+
 @Injectable()
 export class GisPostgreSQLPersistence implements InterfaceGisRepository {
   constructor(private readonly databaseService: DatabaseAbstract) {}
@@ -84,5 +87,69 @@ export class GisPostgreSQLPersistence implements InterfaceGisRepository {
       (result[0] as unknown as { map_geojson?: MapGeojsonSqlResult })
         ?.map_geojson || { type: 'FeatureCollection', features: [] },
     );
+  }
+
+  async getScadaTelemetry(): Promise<ScadaTelemetryResponse[]> {
+    const query = /*sql*/ `
+      SELECT 
+          i.id AS tank_id,
+          i.nombre AS tank_name,
+          cti.nombre AS facility_type,
+          cei.nombre AS system_status,
+          t.capacidad_maxima_m3 AS max_capacity,
+          t.nivel_maximo_m AS max_level_m,
+          
+          -- 1. TELEMETRÍA: Nivel
+          (
+            SELECT json_build_object(
+                'value', ls.valor,
+                'unit', cps.unidad_medida,
+                'percentage', ROUND((ls.valor / NULLIF(t.nivel_maximo_m, 0)) * 100, 1),
+                'timestamp', ls.fecha_hora
+            )
+            FROM hidraulica.punto_medicion pm
+            JOIN hidraulica.cat_parametro_scada cps ON pm.parametro_id = cps.id
+            JOIN hidraulica.lectura_scada ls ON ls.punto_medicion_id = pm.id
+            WHERE pm.instalacion_id = i.id AND cps.codigo = 'NIVEL'
+            ORDER BY ls.fecha_hora DESC LIMIT 1
+          ) AS level_telemetry,
+
+          -- 2. TELEMETRÍA: Caudal de Salida
+          (
+            SELECT json_build_object(
+                'value', ls.valor,
+                'unit', cps.unidad_medida,
+                'timestamp', ls.fecha_hora
+            )
+            FROM hidraulica.punto_medicion pm
+            JOIN hidraulica.cat_parametro_scada cps ON pm.parametro_id = cps.id
+            JOIN hidraulica.lectura_scada ls ON ls.punto_medicion_id = pm.id
+            WHERE pm.instalacion_id = i.id AND cps.codigo = 'CAUDAL_OUT'
+            ORDER BY ls.fecha_hora DESC LIMIT 1
+          ) AS flow_telemetry,
+
+          -- 3. TELEMETRÍA: Presión
+          (
+            SELECT json_build_object(
+                'value', ls.valor,
+                'unit', cps.unidad_medida,
+                'timestamp', ls.fecha_hora
+            )
+            FROM hidraulica.punto_medicion pm
+            JOIN hidraulica.cat_parametro_scada cps ON pm.parametro_id = cps.id
+            JOIN hidraulica.lectura_scada ls ON ls.punto_medicion_id = pm.id
+            WHERE pm.instalacion_id = i.id AND cps.codigo = 'PRESION'
+            ORDER BY ls.fecha_hora DESC LIMIT 1
+          ) AS pressure_telemetry
+
+      FROM hidraulica.instalacion i
+      JOIN hidraulica.cat_tipo_instalacion cti ON i.tipo_id = cti.id
+      JOIN hidraulica.cat_estado_instalacion cei ON i.estado_id = cei.id
+      LEFT JOIN hidraulica.tanque_operacion t ON t.instalacion_id = i.id
+      ORDER BY cti.nombre, i.nombre ASC;
+    `;
+
+    const result = await this.databaseService.query<ScadaTelemetrySqlResult>(query);
+    return GisAdapter.toScadaTelemetryResponse(result);
   }
 }

@@ -79,20 +79,58 @@ export const NOVELTIES: Record<number, INovelty> = {
   },
 };
 */
+export const BASE_CONSUMPTION_THRESHOLD_M3 = 10;
+
 /**
  * Determina el tipo de novedad de consumo basado en las lecturas actual y anterior comparadas con el promedio.
- * @param previousReading - La lectura anterior del medidor (en m3).
- * @param currentReading - La lectura actual del medidor (en m3).
- * @param average - El consumo promedio (en m3).
- * @returns Un objeto con el ID, título, descripción, minPercentage, maxPercentage y acción recomendada de la novedad.
- * @throws Error si los valores de entrada son inválidos.
+ * Aplica el Escudo de Tarifa Base para evitar falsos positivos cuando predios desocupados o de bajo consumo
+ * registran consumos normales dentro de la franquicia básica contratada (0 a 10 m3).
+ *
+ * Admite sobrecarga para retrocompatibilidad con llamadas de 4 argumentos o nuevas de 5 argumentos incluyendo averageValue.
  */
 export function getTypeCurrentConsumption(
   previousReading: number | null,
   currentReading: number | null,
   average: number | null,
-  novelties: INovelty[], // <-- Nuevo parámetro dinámico
+  novelties: INovelty[],
+  baseThresholdM3?: number,
+): INovelty;
+export function getTypeCurrentConsumption(
+  previousReading: number | null,
+  currentReading: number | null,
+  average: number | null,
+  averageValue: number | null | undefined,
+  novelties: INovelty[],
+  baseThresholdM3?: number,
+): INovelty;
+export function getTypeCurrentConsumption(
+  previousReading: number | null,
+  currentReading: number | null,
+  average: number | null,
+  arg4: number | null | undefined | INovelty[],
+  arg5?: INovelty[] | number,
+  arg6?: number,
 ): INovelty {
+  let averageValue: number | null = null;
+  let novelties: INovelty[] = [];
+  let baseThresholdM3: number = BASE_CONSUMPTION_THRESHOLD_M3;
+
+  if (Array.isArray(arg4)) {
+    // Sobrecarga (prev, curr, avg, novelties, baseThresholdM3?)
+    novelties = arg4;
+    averageValue = null;
+    if (typeof arg5 === 'number') {
+      baseThresholdM3 = arg5;
+    }
+  } else {
+    // Sobrecarga (prev, curr, avg, averageValue, novelties, baseThresholdM3?)
+    averageValue = typeof arg4 === 'number' ? arg4 : null;
+    novelties = Array.isArray(arg5) ? arg5 : [];
+    if (typeof arg6 === 'number') {
+      baseThresholdM3 = arg6;
+    }
+  }
+
   // Helper para buscar y sanitizar la novedad por ID
   const getNoveltyById = (id: number): INovelty => {
     const found = novelties.find((n) => n.id === id);
@@ -122,10 +160,12 @@ export function getTypeCurrentConsumption(
     const sinLectura = getNoveltyById(7); // ID 7: SIN LECTURA
     return {
       ...sinLectura,
-      description: sinLectura.description.replace(
-        '{{average}}',
-        average?.toFixed(2) ?? '—',
-      ),
+      description: sinLectura.description
+        .replace('{{average}}', average?.toFixed(2) ?? '—')
+        .replace(
+          '{{averageValue}}',
+          averageValue != null ? averageValue.toFixed(2) : '—',
+        ),
     };
   }
 
@@ -159,18 +199,45 @@ export function getTypeCurrentConsumption(
   }
 
   const currentConsumption = currentReading - previousReading;
-  const percentage = average > 0 ? (currentConsumption / average) * 100 : 0;
 
-  // Manejo de casos especiales (Consumo 0)
+  // 1. Manejo de casos especiales (Consumo 0: Predio desocupado o medidor detenido)
   if (currentConsumption === 0) {
     const consumoMuyBajo = getNoveltyById(4); // ID 4: CONSUMO MUY BAJO
     return {
       ...consumoMuyBajo,
       description: consumoMuyBajo.description
         .replace('{{currentConsumption}}', currentConsumption.toFixed(2))
-        .replace('{{average}}', average.toFixed(2)),
+        .replace('{{average}}', average.toFixed(2))
+        .replace(
+          '{{averageValue}}',
+          averageValue != null ? averageValue.toFixed(2) : '—',
+        ),
     };
   }
+
+  // 2. REGLA DE ORO / ESCUDO DE TARIFA BASE (EPAA: 0 a 10 m3)
+  // Todo consumo entre 1 y el umbral base (10 m3) es NORMAL (ID 1).
+  // Corresponde a la asignación vital contratada ($3.70 residencial, etc.).
+  // Elimina falsos positivos por 'CONSUMO EXCESIVO' o 'CONSUMO MUY BAJO' si el histórico venía en 0.
+  if (currentConsumption > 0 && currentConsumption <= baseThresholdM3) {
+    const normal = getNoveltyById(1); // ID 1: NORMAL
+    return {
+      ...normal,
+      description: normal.description
+        .replace('{{currentConsumption}}', currentConsumption.toFixed(2))
+        .replace('{{average}}', average.toFixed(2))
+        .replace(
+          '{{averageValue}}',
+          averageValue != null ? averageValue.toFixed(2) : '—',
+        ),
+    };
+  }
+
+  // 3. Consumo superior a la base (> 10 m3):
+  // El promedio de referencia no puede ser inferior al umbral base (10 m3)
+  // para evitar divisiones distorsionadas cuando la acometida venía con promedios cercanos a 0.
+  const effectiveAverage = Math.max(average, baseThresholdM3);
+  const percentage = (currentConsumption / effectiveAverage) * 100;
 
   // Buscar dinámicamente la novedad según el porcentaje
   const matchedNovelty = novelties.find((n) => {
@@ -200,7 +267,11 @@ export function getTypeCurrentConsumption(
       title: matchedNovelty.title,
       description: matchedNovelty.description
         .replace('{{currentConsumption}}', currentConsumption.toFixed(2))
-        .replace('{{average}}', average.toFixed(2)),
+        .replace('{{average}}', average.toFixed(2))
+        .replace(
+          '{{averageValue}}',
+          averageValue != null ? averageValue.toFixed(2) : '—',
+        ),
       minPercentage:
         matchedNovelty.minPercentage != null
           ? parseFloat(matchedNovelty.minPercentage as any)

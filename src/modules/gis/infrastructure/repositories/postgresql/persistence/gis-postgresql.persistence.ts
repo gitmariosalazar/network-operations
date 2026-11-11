@@ -20,26 +20,70 @@ export class GisPostgreSQLPersistence implements InterfaceGisRepository {
       ) AS map_geojson
       FROM (
           -- ==========================================
-          -- 1. TANK POINTS (Installations)
+          -- 1. INFRASTRUCTURE NODES (Tanques, Plantas, Bombas, Captaciones)
           -- ==========================================
           SELECT jsonb_build_object(
               'type',       'Feature',
               'id',         'tank_' || i.id,
               'geometry',   ST_AsGeoJSON(i.coordenadas)::jsonb,
               'properties', jsonb_build_object(
-                  'node_type', 'TANK',
+                  'node_type', cti.codigo,
                   'name', i.nombre,
                   'code', i.codigo,
-                  'color_marker', '#FF0000'
+                  'facility_type', cti.nombre,
+                  'color_marker', CASE cti.codigo
+                      WHEN 'BOMBEO' THEN '#F97316'
+                      WHEN 'PLANTA' THEN '#10B981'
+                      WHEN 'TANQUE' THEN '#0EA5E9'
+                      WHEN 'CAPTACION' THEN '#059669'
+                      ELSE '#64748B'
+                  END
               )
           ) AS feature
           FROM hidraulica.instalacion i
-          WHERE i.tipo_id IN (1, 3, 4) AND i.coordenadas IS NOT NULL
+          JOIN hidraulica.cat_tipo_instalacion cti ON i.tipo_id = cti.id
+          WHERE i.coordenadas IS NOT NULL
 
           UNION ALL
 
           -- ==========================================
-          -- 2. CONNECTION POINTS (Houses)
+          -- 2. TRANSMISSION PIPELINES (Facility ---> Facility: ej. Bombeo -> Planta)
+          -- ==========================================
+          SELECT jsonb_build_object(
+              'type',       'Feature',
+              'id',         'pipeline_' || ec.id,
+              'geometry',   ST_AsGeoJSON(COALESCE(ec.trazado_geom, ST_MakeLine(orig.coordenadas, dest.coordenadas)))::jsonb,
+              'properties', jsonb_build_object(
+                  'node_type', 'TRANSMISSION_LINK',
+                  'name', orig.nombre || ' ➔ ' || dest.nombre,
+                  'code', orig.codigo || '-' || dest.codigo,
+                  'source', orig.nombre,
+                  'source_code', orig.codigo,
+                  'source_type', orig_cti.codigo,
+                  'destination', dest.nombre,
+                  'destination_code', dest.codigo,
+                  'destination_type', dest_cti.codigo,
+                  'pipeline_material', ec.material,
+                  'pipeline_diameter_mm', ec.diametro_mm,
+                  'distance_meters', ROUND(COALESCE(ec.longitud_m, ST_Distance(orig.coordenadas::geography, dest.coordenadas::geography))::numeric, 2),
+                  'color_marker', CASE orig_cti.codigo
+                      WHEN 'BOMBEO' THEN '#F97316'
+                      WHEN 'CAPTACION' THEN '#0D9488'
+                      ELSE '#2563EB'
+                  END
+              )
+          ) AS feature
+          FROM hidraulica.enlace_conduccion ec
+          JOIN hidraulica.instalacion orig ON ec.origen_id = orig.id
+          JOIN hidraulica.cat_tipo_instalacion orig_cti ON orig.tipo_id = orig_cti.id
+          JOIN hidraulica.instalacion dest ON ec.destino_id = dest.id
+          JOIN hidraulica.cat_tipo_instalacion dest_cti ON dest.tipo_id = dest_cti.id
+          WHERE orig.coordenadas IS NOT NULL AND dest.coordenadas IS NOT NULL
+
+          UNION ALL
+
+          -- ==========================================
+          -- 3. CONNECTION POINTS (Houses)
           -- ==========================================
           SELECT jsonb_build_object(
               'type',       'Feature',
@@ -50,18 +94,20 @@ export class GisPostgreSQLPersistence implements InterfaceGisRepository {
                   'connection_id', a.acometida_id,
                   'cadastral_key', a.clave_catastral,
                   'supplied_by_tank', i.nombre,
+                  'supplier_type', cti.codigo,
                   'color_marker', '#0000FF'
               )
           ) AS feature
           FROM public.acometida a
           JOIN hidraulica.acometida_fuente af ON a.acometida_id = af.acometida_id
           JOIN hidraulica.instalacion i ON af.instalacion_id = i.id
+          JOIN hidraulica.cat_tipo_instalacion cti ON i.tipo_id = cti.id
           WHERE af.es_activa = true AND a.coordenadas IS NOT NULL
 
           UNION ALL
 
           -- ==========================================
-          -- 3. VIRTUAL LINKS (Tank ---> House)
+          -- 4. VIRTUAL LINKS (Tank/Plant ---> House)
           -- ==========================================
           SELECT jsonb_build_object(
               'type',       'Feature',

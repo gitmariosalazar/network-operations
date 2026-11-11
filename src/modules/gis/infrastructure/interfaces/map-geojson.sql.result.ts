@@ -12,15 +12,23 @@ export interface GeoJsonGeometrySqlResult {
 }
 
 export interface GeoJsonFeaturePropertiesSqlResult {
-  node_type: 'TANK' | 'CONNECTION' | 'VIRTUAL_LINK';
+  node_type: string;
   name?: string;
   code?: string;
+  facility_type?: string;
   color_marker?: string;
   connection_id?: string;
   cadastral_key?: string;
   supplied_by_tank?: string;
+  supplier_type?: string;
   source?: string;
+  source_code?: string;
+  source_type?: string;
   destination?: string;
+  destination_code?: string;
+  destination_type?: string;
+  pipeline_material?: string;
+  pipeline_diameter_mm?: number;
   distance_meters?: number;
 }
 

@@ -19,13 +19,25 @@ export class GisAdapter {
           nodeType: feature.properties.node_type,
           name: feature.properties.name,
           code: feature.properties.code,
+          facilityType: feature.properties.facility_type,
           colorMarker: feature.properties.color_marker,
           connectionId: feature.properties.connection_id,
           cadastralKey: feature.properties.cadastral_key,
           suppliedByTank: feature.properties.supplied_by_tank,
+          supplierType: feature.properties.supplier_type,
           source: feature.properties.source,
+          sourceCode: feature.properties.source_code,
+          sourceType: feature.properties.source_type,
           destination: feature.properties.destination,
-          distanceInMeters: feature.properties.distance_meters,
+          destinationCode: feature.properties.destination_code,
+          destinationType: feature.properties.destination_type,
+          pipelineMaterial: feature.properties.pipeline_material,
+          pipelineDiameterMm: feature.properties.pipeline_diameter_mm
+            ? Number(feature.properties.pipeline_diameter_mm)
+            : undefined,
+          distanceInMeters: feature.properties.distance_meters
+            ? Number(feature.properties.distance_meters)
+            : undefined,
         },
       })),
     };
